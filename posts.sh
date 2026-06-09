@@ -21,6 +21,7 @@ Usage:
   blog status
   blog pull
   blog open
+  blog watch start|stop|status
 
 Environment:
   BLOG_POSTS_DIR  Local posts working directory. Default: ~/github/blog-posts
@@ -31,6 +32,7 @@ Examples:
   blog
   blog menu
   blog import ~/Downloads/article.md
+  blog watch start
   blog new "我的第一篇文章"
   blog publish
 EOF
@@ -153,7 +155,7 @@ publish_posts() {
   git -C "$WORKDIR" add '*.md'
   if git -C "$WORKDIR" diff --cached --quiet; then
     echo "No post changes to publish."
-    exit 0
+    return 0
   fi
   git -C "$WORKDIR" commit -m "$message"
   git -C "$WORKDIR" push origin "$BRANCH"
@@ -188,6 +190,7 @@ import_post() {
 
   ensure_front_matter "$source_file" "$title" > "$target"
   echo "Imported: $target"
+  publish_posts "Import $(basename "$target")"
 }
 
 open_posts() {
@@ -210,6 +213,58 @@ open_root() {
   fi
 }
 
+watch_posts() {
+  local command="${1:-status}"
+  local pid_file="$WORKDIR/.blog-watch.pid"
+
+  case "$command" in
+    start)
+      init_posts >/dev/null
+      if [[ -f "$pid_file" ]] && kill -0 "$(cat "$pid_file")" 2>/dev/null; then
+        echo "Blog watcher already running: $(cat "$pid_file")"
+        return 0
+      fi
+      (
+        cd "$WORKDIR"
+        last_state=""
+        while true; do
+          current_state="$(find . -maxdepth 1 -type f -name '*.md' -printf '%f %T@ %s\n' | sort)"
+          if [[ -n "$last_state" && "$current_state" != "$last_state" ]]; then
+            sleep 2
+            /home/pc/github/lizi-learn.github.io/posts.sh publish "Auto publish blog posts" >/tmp/blog-watch.log 2>&1 || true
+          fi
+          last_state="$current_state"
+          sleep 5
+        done
+      ) >/tmp/blog-watch.log 2>&1 &
+      echo $! > "$pid_file"
+      echo "Blog watcher started: $(cat "$pid_file")"
+      echo "Drop or edit .md files in: $WORKDIR"
+      ;;
+    stop)
+      if [[ -f "$pid_file" ]] && kill -0 "$(cat "$pid_file")" 2>/dev/null; then
+        kill "$(cat "$pid_file")"
+        rm -f "$pid_file"
+        echo "Blog watcher stopped."
+      else
+        rm -f "$pid_file"
+        echo "Blog watcher is not running."
+      fi
+      ;;
+    status)
+      if [[ -f "$pid_file" ]] && kill -0 "$(cat "$pid_file")" 2>/dev/null; then
+        echo "Blog watcher running: $(cat "$pid_file")"
+      else
+        echo "Blog watcher is not running."
+      fi
+      ;;
+    *)
+      echo "Usage: blog watch start|stop|status" >&2
+      exit 1
+      ;;
+  esac
+}
+
 menu() {
   init_posts >/dev/null
   while true; do
@@ -222,7 +277,8 @@ Blog Manager
 4) 发布
 5) 查看文章列表
 6) 打开文章目录
-7) 同步远端
+7) 开启自动发布
+8) 同步远端
 0) 退出
 EOF
     read -r -p "请选择: " choice
@@ -251,6 +307,9 @@ EOF
         open_posts
         ;;
       7)
+        watch_posts start
+        ;;
+      8)
         git -C "$WORKDIR" pull --ff-only origin "$BRANCH"
         ;;
       0)
@@ -296,6 +355,10 @@ case "${1:-}" in
   pull)
     ensure_workdir
     git -C "$WORKDIR" pull --ff-only origin "$BRANCH"
+    ;;
+  watch)
+    shift
+    watch_posts "${1:-status}"
     ;;
   menu)
     menu
