@@ -4,7 +4,6 @@ set -euo pipefail
 REPO_URL="https://github.com/lizi-learn/lizi-learn.github.io.git"
 REPO_OWNER="lizi-learn"
 REPO_NAME="lizi-learn.github.io"
-TOKEN_FILE="${GITHUB_TOKEN_FILE:-$HOME/github/github_profile.txt}"
 BRANCH="_posts"
 WORKDIR="${BLOG_POSTS_DIR:-$HOME/github/blog-posts}"
 ROOT_DIR="${BLOG_ROOT_DIR:-$HOME/github}"
@@ -30,7 +29,6 @@ Usage:
 Environment:
   BLOG_POSTS_DIR     Local posts working directory. Default: ~/github/blog-posts
   BLOG_ROOT_DIR      Directory opened by plain blog. Default: ~/github
-  GITHUB_TOKEN_FILE  Token file. Default: ~/github/github_profile.txt
   EDITOR             Editor command. Default: nano
 
 Examples:
@@ -178,45 +176,20 @@ edit_post() {
   "$EDITOR_CMD" "$target"
 }
 
-get_github_token() {
-  if [[ -n "${GITHUB_TOKEN:-}" ]]; then
-    printf '%s' "$GITHUB_TOKEN"
-    return 0
-  fi
-  if [[ -f "$TOKEN_FILE" ]]; then
-    head -n 1 "$TOKEN_FILE" | tr -d '\r\n'
-    return 0
-  fi
-  return 1
-}
-
 trigger_deploy() {
-  local token
-  token="$(get_github_token || true)"
-  if [[ -z "$token" ]]; then
-    echo "Deploy trigger skipped: no GitHub token found."
-    echo "Set GITHUB_TOKEN or put it in: $TOKEN_FILE"
-    return 0
-  fi
-  if ! command -v curl >/dev/null; then
-    echo "Deploy trigger skipped: curl is not installed."
+  local source_repo="$ROOT_DIR/$REPO_NAME"
+  if [[ ! -d "$source_repo/.git" ]]; then
+    echo "Deploy trigger skipped: source repo not found: $source_repo"
     return 0
   fi
 
-  local code
-  code="$(curl -sS -o /tmp/blog-workflow-dispatch.json -w '%{http_code}' \
-    -X POST \
-    -H "Authorization: Bearer ${token}" \
-    -H "Accept: application/vnd.github+json" \
-    -H "X-GitHub-Api-Version: 2022-11-28" \
-    "https://api.github.com/repos/${REPO_OWNER}/${REPO_NAME}/actions/workflows/pages.yml/dispatches" \
-    -d '{"ref":"main"}')"
-  if [[ "$code" == "204" ]]; then
-    echo "Deployment workflow triggered."
-  else
-    echo "Deploy trigger failed: HTTP $code"
-    cat /tmp/blog-workflow-dispatch.json 2>/dev/null || true
-  fi
+  echo "Triggering deployment from main branch..."
+  git -C "$source_repo" fetch origin main
+  git -C "$source_repo" checkout main >/dev/null
+  git -C "$source_repo" pull --ff-only origin main
+  git -C "$source_repo" commit --allow-empty -m "Trigger blog deploy"
+  git -C "$source_repo" push origin main
+  echo "Deployment workflow triggered."
 }
 
 push_posts() {
