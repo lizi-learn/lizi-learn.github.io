@@ -4,6 +4,7 @@ on:
   push:
     branches:
       - main
+      - _posts
   workflow_dispatch:
 
 permissions:
@@ -19,8 +20,20 @@ jobs:
   build:
     runs-on: ubuntu-latest
     steps:
-      - name: Checkout
+      - name: Checkout Hexo source
         uses: actions/checkout@v4
+        with:
+          ref: main
+      - name: Checkout posts branch
+        uses: actions/checkout@v4
+        with:
+          ref: _posts
+          path: .posts-branch
+      - name: Sync posts
+        run: |
+          rm -rf source/_posts
+          mkdir -p source/_posts
+          find .posts-branch -maxdepth 1 -type f -name '*.md' -exec cp {} source/_posts/ \;
       - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
