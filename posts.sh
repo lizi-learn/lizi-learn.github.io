@@ -4,12 +4,14 @@ set -euo pipefail
 REPO_URL="https://github.com/lizi-learn/lizi-learn.github.io.git"
 BRANCH="_posts"
 WORKDIR="${BLOG_POSTS_DIR:-$HOME/github/blog-posts}"
+ROOT_DIR="${BLOG_ROOT_DIR:-$HOME/github}"
 EDITOR_CMD="${EDITOR:-nano}"
 
 usage() {
   cat <<'EOF'
 Usage:
   blog
+  blog menu
   blog init
   blog list
   blog new "文章标题"
@@ -22,10 +24,12 @@ Usage:
 
 Environment:
   BLOG_POSTS_DIR  Local posts working directory. Default: ~/github/blog-posts
+  BLOG_ROOT_DIR   Directory opened by plain blog. Default: ~/github
   EDITOR          Editor command. Default: nano
 
 Examples:
   blog
+  blog menu
   blog import ~/Downloads/article.md
   blog new "我的第一篇文章"
   blog publish
@@ -195,6 +199,17 @@ open_posts() {
   fi
 }
 
+open_root() {
+  mkdir -p "$ROOT_DIR"
+  if command -v code >/dev/null; then
+    code "$ROOT_DIR" >/dev/null 2>&1 &
+  elif command -v xdg-open >/dev/null; then
+    xdg-open "$ROOT_DIR" >/dev/null 2>&1 &
+  else
+    echo "$ROOT_DIR"
+  fi
+}
+
 menu() {
   init_posts >/dev/null
   while true; do
@@ -282,11 +297,14 @@ case "${1:-}" in
     ensure_workdir
     git -C "$WORKDIR" pull --ff-only origin "$BRANCH"
     ;;
+  menu)
+    menu
+    ;;
   -h|--help|help)
     usage
     ;;
   "")
-    menu
+    open_root
     ;;
   *)
     echo "Unknown command: $1" >&2
