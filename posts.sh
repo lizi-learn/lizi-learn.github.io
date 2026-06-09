@@ -14,12 +14,13 @@ Usage:
   blog menu
   blog init
   blog list
+  blog push [提交说明]
+  blog pull
+  blog delete <编号|文件名>
   blog new "文章标题"
   blog import <file.md> [title]
-  blog edit <file.md>
-  blog publish [提交说明]
+  blog edit <编号|文件名>
   blog status
-  blog pull
   blog open
   blog watch start|stop|status
 
@@ -32,9 +33,9 @@ Examples:
   blog
   blog menu
   blog import ~/Downloads/article.md
-  blog watch start
-  blog new "我的第一篇文章"
-  blog publish
+  blog list
+  blog delete 1
+  blog push
 EOF
 }
 
@@ -94,9 +95,42 @@ init_posts() {
   echo "Posts workspace ready: $WORKDIR"
 }
 
+post_file_by_ref() {
+  ensure_workdir
+  local ref="$1"
+  if [[ -z "$ref" ]]; then
+    echo "Post number or file name is required." >&2
+    exit 1
+  fi
+
+  if [[ "$ref" =~ ^[0-9]+$ ]]; then
+    local file
+    file="$(find "$WORKDIR" -maxdepth 1 -type f -name '*.md' -printf '%f\n' | sort | sed -n "${ref}p")"
+    if [[ -z "$file" ]]; then
+      echo "No post with number: $ref" >&2
+      exit 1
+    fi
+    printf '%s/%s' "$WORKDIR" "$file"
+  else
+    [[ "$ref" = /* ]] || ref="$WORKDIR/$ref"
+    if [[ ! -f "$ref" ]]; then
+      echo "File not found: $ref" >&2
+      exit 1
+    fi
+    printf '%s' "$ref"
+  fi
+}
+
 list_posts() {
   ensure_workdir
-  find "$WORKDIR" -maxdepth 1 -type f -name '*.md' -printf '%f\n' | sort
+  local count=0
+  while IFS= read -r file; do
+    count=$((count + 1))
+    printf '%2d. %s\n' "$count" "$file"
+  done < <(find "$WORKDIR" -maxdepth 1 -type f -name '*.md' -printf '%f\n' | sort)
+  if [[ "$count" -eq 0 ]]; then
+    echo "No posts."
+  fi
 }
 
 new_post() {
@@ -135,31 +169,37 @@ EOF
 
 edit_post() {
   ensure_workdir
-  local file="${1:-}"
-  if [[ -z "$file" ]]; then
-    echo "Markdown file is required." >&2
-    exit 1
-  fi
-  [[ "$file" = /* ]] || file="$WORKDIR/$file"
-  if [[ ! -f "$file" ]]; then
-    echo "File not found: $file" >&2
-    exit 1
-  fi
-  "$EDITOR_CMD" "$file"
+  local target
+  target="$(post_file_by_ref "${1:-}")"
+  "$EDITOR_CMD" "$target"
 }
 
-publish_posts() {
+push_posts() {
   ensure_workdir
   local message="${1:-Update blog posts}"
   git -C "$WORKDIR" status --short
-  git -C "$WORKDIR" add '*.md'
+  git -C "$WORKDIR" add -A -- '*.md'
   if git -C "$WORKDIR" diff --cached --quiet; then
-    echo "No post changes to publish."
+    echo "No post changes to push."
     return 0
   fi
   git -C "$WORKDIR" commit -m "$message"
   git -C "$WORKDIR" push origin "$BRANCH"
-  echo "Published. GitHub Actions will deploy the blog automatically."
+  echo "Pushed. GitHub Actions will deploy the blog automatically."
+}
+
+pull_posts() {
+  ensure_workdir
+  git -C "$WORKDIR" pull --ff-only origin "$BRANCH"
+}
+
+delete_post() {
+  ensure_workdir
+  local target
+  target="$(post_file_by_ref "${1:-}")"
+  rm -f "$target"
+  echo "Deleted locally: $(basename "$target")"
+  echo "Run 'blog push' to update GitHub."
 }
 
 import_post() {
@@ -189,8 +229,8 @@ import_post() {
   fi
 
   ensure_front_matter "$source_file" "$title" > "$target"
-  echo "Imported: $target"
-  publish_posts "Import $(basename "$target")"
+  echo "Imported locally: $target"
+  echo "Run 'blog push' to update GitHub."
 }
 
 open_posts() {
@@ -231,7 +271,7 @@ watch_posts() {
           current_state="$(find . -maxdepth 1 -type f -name '*.md' -printf '%f %T@ %s\n' | sort)"
           if [[ -n "$last_state" && "$current_state" != "$last_state" ]]; then
             sleep 2
-            /home/pc/github/lizi-learn.github.io/posts.sh publish "Auto publish blog posts" >/tmp/blog-watch.log 2>&1 || true
+            /home/pc/github/lizi-learn.github.io/posts.sh push "Auto update blog posts" >/tmp/blog-watch.log 2>&1 || true
           fi
           last_state="$current_state"
           sleep 5
@@ -274,10 +314,10 @@ Blog Manager
 1) 新建文章
 2) 导入 Markdown 文件
 3) 编辑文章
-4) 发布
+4) 推送本地到 GitHub
 5) 查看文章列表
-6) 打开文章目录
-7) 开启自动发布
+6) 删除文章
+7) 打开文章目录
 8) 同步远端
 0) 退出
 EOF
@@ -298,19 +338,21 @@ EOF
         ;;
       4)
         read -r -p "提交说明[Update blog posts]: " message
-        publish_posts "${message:-Update blog posts}"
+        push_posts "${message:-Update blog posts}"
         ;;
       5)
         list_posts
         ;;
       6)
-        open_posts
+        list_posts
+        read -r -p "删除编号或文件名: " ref
+        delete_post "$ref"
         ;;
       7)
-        watch_posts start
+        open_posts
         ;;
       8)
-        git -C "$WORKDIR" pull --ff-only origin "$BRANCH"
+        pull_posts
         ;;
       0)
         exit 0
@@ -344,17 +386,20 @@ case "${1:-}" in
   open)
     open_posts
     ;;
-  publish)
+  push|publish)
     shift
-    publish_posts "${1:-Update blog posts}"
+    push_posts "${1:-Update blog posts}"
+    ;;
+  delete|rm)
+    shift
+    delete_post "${1:-}"
     ;;
   status)
     ensure_workdir
     git -C "$WORKDIR" status --short
     ;;
   pull)
-    ensure_workdir
-    git -C "$WORKDIR" pull --ff-only origin "$BRANCH"
+    pull_posts
     ;;
   watch)
     shift
