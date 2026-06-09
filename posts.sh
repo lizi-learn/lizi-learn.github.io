@@ -4,6 +4,7 @@ set -euo pipefail
 REPO_URL="https://github.com/lizi-learn/lizi-learn.github.io.git"
 REPO_OWNER="lizi-learn"
 REPO_NAME="lizi-learn.github.io"
+TOKEN_FILE="${GITHUB_TOKEN_FILE:-$HOME/github/github_profile.txt}"
 BRANCH="_posts"
 WORKDIR="${BLOG_POSTS_DIR:-$HOME/github/blog-posts}"
 ROOT_DIR="${BLOG_ROOT_DIR:-$HOME/github}"
@@ -27,9 +28,10 @@ Usage:
   blog watch start|stop|status
 
 Environment:
-  BLOG_POSTS_DIR  Local posts working directory. Default: ~/github/blog-posts
-  BLOG_ROOT_DIR   Directory opened by plain blog. Default: ~/github
-  EDITOR          Editor command. Default: nano
+  BLOG_POSTS_DIR     Local posts working directory. Default: ~/github/blog-posts
+  BLOG_ROOT_DIR      Directory opened by plain blog. Default: ~/github
+  GITHUB_TOKEN_FILE  Token file. Default: ~/github/github_profile.txt
+  EDITOR             Editor command. Default: nano
 
 Examples:
   blog
@@ -38,9 +40,6 @@ Examples:
   blog list
   blog delete 1
   blog push
-
-Optional:
-  GITHUB_TOKEN     Triggers GitHub Actions deployment after blog push.
 EOF
 }
 
@@ -179,10 +178,24 @@ edit_post() {
   "$EDITOR_CMD" "$target"
 }
 
+get_github_token() {
+  if [[ -n "${GITHUB_TOKEN:-}" ]]; then
+    printf '%s' "$GITHUB_TOKEN"
+    return 0
+  fi
+  if [[ -f "$TOKEN_FILE" ]]; then
+    head -n 1 "$TOKEN_FILE" | tr -d '\r\n'
+    return 0
+  fi
+  return 1
+}
+
 trigger_deploy() {
-  if [[ -z "${GITHUB_TOKEN:-}" ]]; then
-    echo "Deploy trigger skipped: GITHUB_TOKEN is not set."
-    echo "GitHub Pages updates after the next main-branch workflow run."
+  local token
+  token="$(get_github_token || true)"
+  if [[ -z "$token" ]]; then
+    echo "Deploy trigger skipped: no GitHub token found."
+    echo "Set GITHUB_TOKEN or put it in: $TOKEN_FILE"
     return 0
   fi
   if ! command -v curl >/dev/null; then
@@ -193,7 +206,7 @@ trigger_deploy() {
   local code
   code="$(curl -sS -o /tmp/blog-workflow-dispatch.json -w '%{http_code}' \
     -X POST \
-    -H "Authorization: Bearer ${GITHUB_TOKEN}" \
+    -H "Authorization: Bearer ${token}" \
     -H "Accept: application/vnd.github+json" \
     -H "X-GitHub-Api-Version: 2022-11-28" \
     "https://api.github.com/repos/${REPO_OWNER}/${REPO_NAME}/actions/workflows/pages.yml/dispatches" \
