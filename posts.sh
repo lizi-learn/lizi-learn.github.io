@@ -2,6 +2,8 @@
 set -euo pipefail
 
 REPO_URL="https://github.com/lizi-learn/lizi-learn.github.io.git"
+REPO_OWNER="lizi-learn"
+REPO_NAME="lizi-learn.github.io"
 BRANCH="_posts"
 WORKDIR="${BLOG_POSTS_DIR:-$HOME/github/blog-posts}"
 ROOT_DIR="${BLOG_ROOT_DIR:-$HOME/github}"
@@ -36,6 +38,9 @@ Examples:
   blog list
   blog delete 1
   blog push
+
+Optional:
+  GITHUB_TOKEN     Triggers GitHub Actions deployment after blog push.
 EOF
 }
 
@@ -174,6 +179,33 @@ edit_post() {
   "$EDITOR_CMD" "$target"
 }
 
+trigger_deploy() {
+  if [[ -z "${GITHUB_TOKEN:-}" ]]; then
+    echo "Deploy trigger skipped: GITHUB_TOKEN is not set."
+    echo "GitHub Pages updates after the next main-branch workflow run."
+    return 0
+  fi
+  if ! command -v curl >/dev/null; then
+    echo "Deploy trigger skipped: curl is not installed."
+    return 0
+  fi
+
+  local code
+  code="$(curl -sS -o /tmp/blog-workflow-dispatch.json -w '%{http_code}' \
+    -X POST \
+    -H "Authorization: Bearer ${GITHUB_TOKEN}" \
+    -H "Accept: application/vnd.github+json" \
+    -H "X-GitHub-Api-Version: 2022-11-28" \
+    "https://api.github.com/repos/${REPO_OWNER}/${REPO_NAME}/actions/workflows/pages.yml/dispatches" \
+    -d '{"ref":"main"}')"
+  if [[ "$code" == "204" ]]; then
+    echo "Deployment workflow triggered."
+  else
+    echo "Deploy trigger failed: HTTP $code"
+    cat /tmp/blog-workflow-dispatch.json 2>/dev/null || true
+  fi
+}
+
 push_posts() {
   ensure_workdir
   local message="${1:-Update blog posts}"
@@ -185,7 +217,8 @@ push_posts() {
   fi
   git -C "$WORKDIR" commit -m "$message"
   git -C "$WORKDIR" push origin "$BRANCH"
-  echo "Pushed. GitHub Actions will deploy the blog automatically."
+  echo "Pushed."
+  trigger_deploy
 }
 
 pull_posts() {
